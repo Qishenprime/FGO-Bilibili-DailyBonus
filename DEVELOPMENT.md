@@ -164,6 +164,24 @@ AP = actMax - ceil((actRecoverAt - serverTime) / 300)
 
 于是有了 `FGO_APPLE_AP_MIN`（默认 120）：AP 不到阈值就跳过本次合成，只打印一行"未达合成阈值"并附预计还需多久；设为 `max` 则阈值取 `actMax` 本身——**AP 满了才换**，升级涨上限后自动跟上。配合 workflow 里**每 3 小时**的静态调度——每轮合成花 40 AP、3 小时只回复 36 AP，会自动收敛到"合成几轮、歇一轮"的节奏，稳态约 7 个苹果/天（288 AP/天回复上限封顶）；玩家把 AP 花掉了，最迟 3 小时后下次运行自动回归正常节奏。比动态改写 cron 干净：没有提交噪音，调度自纠错。
 
+### 坑八：GitHub 的 cron 会"看心情"跑
+
+跑了一阵发现：GitHub 的 `schedule` 是**尽力而为**，会延迟、甚至整点漏跑（实测出现过 6 小时空档，连续登录没断是因为前几天的运行覆盖到了，但换苹果的及时性受影响）。
+
+于是加了一个**外部定时器**兜底（cron-job.org 免费版）：每 3 小时（分钟设在 `:45`，错开 GitHub 自带的 `:17`）调用 GitHub API 触发一次 `workflow_dispatch`：
+
+```
+POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/checkin.yml/dispatches
+Authorization: Bearer <PAT>
+Accept: application/vnd.github+json
+Body: {"ref":"main"}
+```
+
+要点：
+- 脚本是**幂等**的（已签到会提示"今日已签到"，换苹果按 AP 判断），两套调度同时打也不会重复签到，谁先到谁生效。
+- PAT 建议用 **fine-grained**，仅授权该仓库 + `Actions: Read and write`，别用全权限 classic token。
+- 在定时服务里开启**失败邮件通知**，token 失效/接口变动能第一时间发现。
+
 ## 许可证
 
 协议实现参考了两个 AGPL-3.0 项目（Chaldea、fgo-cn-toplogin-extractor）的公开研究成果。尊重前辈，按规矩来：本项目以 **AGPL-3.0** 发布。
