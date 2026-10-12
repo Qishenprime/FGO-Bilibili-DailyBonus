@@ -62,7 +62,7 @@ python login_qr.py run "你的FGO御主名"
 
 > **（可选）开启自动苹果合成**：同页面切到 **Variables** 标签 → **New repository variable**，添加 `FGO_APPLE_NUM` = 每次运行合成的数量（如 `1`）。不设置或设为 `0` = 关闭。可再添加 `FGO_APPLE_AP_MIN`：**AP 达到该阈值才开始合成**，默认 `120`，设为 **`max`** 则 **AP 满了才换**（自动等于上限，升级后自适应）；低于阈值本次跳过、不影响签到。
 
-> **（可选）开启剧情池每日免费单抽**：再加三个 Variable —— `FGO_GACHA_ID` = 剧情池卡池 ID（国服 2026-10 为 `500139`，获取办法见 [🎴 那一节](#-剧情池每日免费单抽可选)）、`FGO_GACHA_DRAW` = `1`（**不设它只做检查、不抽卡**）、`FGO_GACHA_FREE_UNTIL` = 活动截止日（默认 `2026-12-31`，过期自动停手）。想先看看效果：本地跑 `python gacha.py --list`。
+> **（可选）开启剧情池每日免费单抽**：同页面 **Variables** 标签加 `FGO_GACHA_ID=500139` + `FGO_GACHA_DRAW=1` + `FGO_GACHA_ASSUME_FREE=1`。参数含义与完整清单见 [🎴 剧情池每日免费单抽](#-剧情池每日免费单抽可选)；不设 `FGO_GACHA_DRAW` 时只检查、不抽卡。
 
 ### 4. 启用 Actions 并验证
 
@@ -88,67 +88,52 @@ python checkin.py
 
 ## 🎴 剧情池每日免费单抽（可选）
 
-> 国服十周年活动：剧情召唤（常驻池）每天一次免费单抽，截止 2026-12-31。本功能把这一次顺手用掉。
+> 国服十周年活动：剧情召唤（常驻池）每天可免费单抽一次，截止 2026-12-31。开启后每次签到顺手把这一次用掉。
 
-### 1) 先拿到卡池 ID（最省事的办法：不用抓包）
+### 参数一览
 
-**在游戏里手动点掉今天那次免费单抽**，然后跑一条只读命令：
+| 参数 | 位置 | 建议值 | 说明 |
+|---|---|---|---|
+| `gacha_id` / `FGO_GACHA_ID` | 本地 `gacha.json` / 云端 Variable | `500139` | 剧情池卡池 ID（国服 2026-10） |
+| `draw` / `FGO_GACHA_DRAW` | 同上 | `false` → `true` | **只有 `true` 才真正抽卡**；不设 = 只检查 |
+| `num` / `FGO_GACHA_NUM` | 同上 | `1` | 抽数 |
+| `assume_free` / `FGO_GACHA_ASSUME_FREE` | 同上 | `true` | 服务端不下发免费标记时也按免费池处理；**云端建议开启** |
+| `free_until` / `FGO_GACHA_FREE_UNTIL` | 同上 | `2026-12-31` | 活动窗口，过期自动停手 |
+| `id_param` | 同上 | `id` | 卡池 ID 的参数名，一般不用改 |
+| `extra` / `FGO_GACHA_EXTRA` | 同上 | 空 | 额外请求参数 JSON，一般不用改 |
+
+> `gacha_id` 需要更新时（换新剧情池），用 `python gacha.py --list` 取**今天有 `freeDrawAt` 记录的那一行 `gachaId`**。
+
+### 本地开启
 
 ```powershell
-python gacha.py --list
+Copy-Item gacha.example.json gacha.json   # 已按 500139 配好, draw=false
+python gacha.py --list                    # 只读: 卡池 / 今日免费状态 / 呼符与圣晶石
+python gacha.py                           # 只检查: 今天这一次能不能免费抽
+python gacha.py --draw                    # 确认无误后再真抽(或把 gacha.json 的 draw 改成 true)
 ```
 
-`userGacha` 里**今天有 `freeDrawAt` 记录的那一行，它的 `gachaId` 就是剧情池 ID**（因为免费单抽会把这个字段更新成你点抽的时刻）：
+把 `draw` 改成 `true` 之后，`python checkin.py` 每次签到就会顺带用掉当天那次免费单抽。
 
-```
-gachaId=500139   freeDrawAt=2026-10-12 22:02:09   num=7 tenNum=0 status=0   ← 就是它
-```
+### 云端开启
 
-> 国服 2026-10 的剧情池 id 是 **500139**（已实测：在该池抽免费单抽后，圣晶石与呼符数量都没变）。
-> 这个办法比抓包省事得多——不用 root、不用证书、不碰代理，一次游戏内点击就够。
+仓库 **Settings → Secrets and variables → Actions → Variables**：
 
-拿到后本地验证一次（**只检查、不抽卡**）：
+| Variable | 值 |
+|---|---|
+| `FGO_GACHA_ID` | `500139` |
+| `FGO_GACHA_DRAW` | `1` |
+| `FGO_GACHA_ASSUME_FREE` | `1` |
+| `FGO_GACHA_FREE_UNTIL` | `2026-12-31`（可省） |
 
-```bash
-python gacha.py --list                # 看卡池主数据 / 今日免费状态 / 呼符与圣晶石
-python gacha.py                       # 只检查: 今天这一次能不能免费抽
-python gacha.py --draw                # 确认无误后再真正抽 (或把 gacha.json 里 draw 改成 true)
-```
+建议**先只设 `FGO_GACHA_ID` + `FGO_GACHA_ASSUME_FREE`** 手动跑一次（此时只检查、不抽卡），
+日志里看到 `免费单抽: 可用/跳过 (...)` 确认逻辑正常，再加上 `FGO_GACHA_DRAW=1`。
 
-把 id 写进配置（直接手写一份 `gacha.json` 即可）：
+### 行为与安全
 
-```json
-{ "gacha_id": 500139, "id_param": "id", "assume_free": true, "draw": false, "free_until": "2026-12-31" }
-```
-
-### 2) 打开自动抽
-
-- 本地：把 `gacha.json` 里的 `"draw"` 改成 `true`，之后 `python checkin.py` 每次签到顺带用掉免费单抽；或
-  `$env:FGO_GACHA_ID="500139"; $env:FGO_GACHA_DRAW="1"; python checkin.py`
-- 云端：仓库 Variables 里设 `FGO_GACHA_ID=500139` + `FGO_GACHA_DRAW=1`（+ 可选 `FGO_GACHA_FREE_UNTIL`）
-
-### 3) 安全设计（为什么它不会乱花你的石头）
-
-真正抽卡前必须同时满足：**活动窗口内**（默认到 2026-12-31）∧ **卡池 `freeDrawFlag != 0`**
-∧ **`userGacha.freeDrawAt` 早于今日重置时刻 `userGame.zerotime`**（即今天还没用过免费次数）。
-任一条件不满足就只打印跳过原因、不发抽卡请求。抽完之后还会核对服务端增量：**如果呼符/圣晶石
-变少了，会明确打出「本次不是免费抽」的告警**（输出里的 `resource` 字段）。
-
-- `FGO_GACHA_ASSUME_FREE=1`：主数据里看不到 `freeDrawFlag` 时也认为它是免费池 —— 仅在已实测确认该 id 就是活动免费池时使用。
-- `FGO_GACHA_FREE_WINDOW=0`：关闭活动窗口校验（不推荐）。
-- 只想检查不动手：`FGO_GACHA_DRAW` 不设即可。
-
-### 4) 抓包结论（工具已删除，结论保留）
-
-排查期间写过一整套抓包/验证工具（mitmproxy addon、证书安装器、HAR 解析器等），**确认结论后已全部删除**。
-有用的东西留在这里：
-
-- 请求是 `ac.php?_key=gachadraw`，参数名是 **`id`** + `num`；写成标量 `gachaId` 服务端直接回 `参数错误`。
-- 对任何"当前不可抽"的 id 一律只回 `扭蛋ID有误`，**零信息量** —— 别指望用报错反推 id；`num=0` 也不能当存在性探针（无效 id 与真实 id 回同一句话）。
-- 战斗类动作确实存在（实测 `battlesetup` / `battleresult`），但逐回合指令、战斗种子、主数据都要自己啃，所以推图没走 API 这条路。
-- Android 14+ 的系统 CA 在 `/apex/com.android.conscrypt/cacerts`（只读 loop 挂载），"设置→安装证书"装的是**用户 store**，API 24+ 的 app 不信；要给 app 用必须 root + 在 zygote 命名空间里覆盖挂载（重启即失效）。
-- 以后真要再抓：`pip install mitmproxy` 自己写个 addon 记 `ac.php`，**并且只拦游戏 API 域名**（`le*-fate` / `line*-s*-bili-fate`），其余一律明文直通 —— 全量解密很容易把客户端登录/SDK 链路拖坏，游戏会弹"前方拥堵"。
-- **刷图或抓包期间别跑 `checkin.py` / `gacha.py`**：脚本登录会把游戏会话顶掉，游戏直接掉线。
+- 发抽卡请求前必须同时满足：**在活动窗口内** ∧ **该卡池是免费池**（`assume_free` 或服务端 `freeDrawFlag`）∧ **今天还没用过免费次数**（`userGacha.freeDrawAt` 早于今日重置时刻 `userGame.zerotime`）。任一不满足就只打印跳过原因、**不发请求**。
+- 抽完会核对服务端增量：**若呼符/圣晶石变少，会打出「本次不是免费抽」的告警**（输出里的 `resource` 字段）。
+- `FGO_GACHA_FREE_WINDOW=0`：关闭活动窗口校验（不推荐）；`FGO_GACHA_ID` 不设 = 该功能整体关闭。
 
 ## 🔄 token 自动续期说明
 
@@ -180,8 +165,11 @@ A: 无法承诺。第三方模拟客户端登录存在触发风控/违反用户�
 **Q: 免费单抽会花掉我的圣晶石/呼符吗？**
 A: 默认不会：不设 `FGO_GACHA_DRAW=1` 时只检查不抽；开了之后也要同时满足「活动窗口内 + 卡池标记为免费 + 今日免费次数没用过」才会发抽卡请求，抽完还会核对资源是否真的没变。真要出问题也是"少抽一次"而不是"多花石头"。
 
-**Q: 为什么非要抓包拿卡池 ID，不能自动识别吗？**
-A: 常驻剧情池没变化时服务端不会重复下发它的 `mstGacha` 主数据，签到响应里通常看不到它；而对不可用的 id 服务端只回 `扭蛋ID有误`，等于没有信息量。所以第一次必须抓一次真实单抽拿到 id；之后本功能会把它写死用，同时仍然按"今日免费次数是否用过"来判断该不该抽。
+**Q: 剧情池的卡池 ID 变了怎么办？**
+A: 用 `python gacha.py --list` 看哪一行今天有 `freeDrawAt` 记录，那行的 `gachaId` 就是当前剧情池，更新 `FGO_GACHA_ID`（或 `gacha.json` 的 `gacha_id`）即可。
+
+**Q: 跑脚本时游戏会掉线吗？**
+A: 会。脚本登录会顶掉游戏会话，所以别在游戏在线时跑 `checkin.py` / `gacha.py`，反过来也一样。
 
 ## ⚠️ 免责声明
 
