@@ -152,6 +152,7 @@ python gacha.py --draw                    # 确认无误后再真抽(或把 gach
 | `NTFY_URL` | 同上 | `https://ntfy.sh/你的主题` | ntfy 推送地址（自建服务器换域名）；**主题名等同密码，建议放 Secret** |
 | `NTFY_TOPIC` / `NTFY_SERVER` | 同上 | — | 不想写整条 URL 时用：主题名 + 服务器（默认 `https://ntfy.sh`） |
 | `NTFY_TOKEN` | Secret | 空 | 主题开了写保护时填（Bearer） |
+| `NTFY_MODE` | 同上 | `json` | 默认走 ntfy 的 **JSON 发布**（标题/正文用 UTF-8，中文标题没问题）；设成 `raw` 则用 HTTP 头发布，而 HTTP 头只能是 latin-1，**中文标题只会剩下英文字符** |
 | `NTFY_PRIORITY` | 同上 | `3` | 1–5；**失败自动用 4** |
 | `NTFY_TAGS` | 同上 | 空 | 逗号分隔，如 `video_game,white_check_mark` |
 | `TG_BOT_TOKEN` | Secret | — | [@BotFather](https://t.me/BotFather) 给的 token |

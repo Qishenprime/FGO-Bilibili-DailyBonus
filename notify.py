@@ -18,6 +18,10 @@
     NTFY_TOKEN      主题开了写保护时填（Bearer）        [建议 Secret]
     NTFY_PRIORITY   1-5，默认 3；失败时自动用 4
     NTFY_TAGS       逗号分隔，如 video_game,white_check_mark
+    NTFY_MODE       json（默认，推荐）| raw
+                    json: 用 ntfy 的 JSON 发布, 标题/正文走 UTF-8 正文, 中文标题没问题;
+                    raw : 用 HTTP 头发布, 而 HTTP 头只能是 latin-1, 中文标题会被丢掉
+                          （想用 raw 就把 NOTIFY_TITLE 改成纯英文）
 
   Telegram（两项都要）
     TG_BOT_TOKEN    @BotFather 给的 token               [建议 Secret]
@@ -30,6 +34,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -64,18 +69,32 @@ def notify_mode() -> str:
 
 # ---------------- 配置解析 ----------------
 
+def _split_base_topic(url: str) -> tuple[str, str]:
+    """把 https://ntfy.sh/主题 拆成 (服务器, 主题); 支持自建服务器带路径前缀。"""
+    clean = url.rstrip("/")
+    base, _, topic = clean.rpartition("/")
+    return (base or "https://ntfy.sh"), topic
+
+
 def ntfy_config() -> dict | None:
     url = _env("NTFY_URL")
-    if not url:
-        topic = _env("NTFY_TOPIC")
+    topic = _env("NTFY_TOPIC")
+    server = _env("NTFY_SERVER", default="https://ntfy.sh").rstrip("/")
+    if not url and not topic:
+        return None
+    if topic:
+        base = server
+    else:
+        base, topic = _split_base_topic(url)
         if not topic:
             return None
-        server = _env("NTFY_SERVER", default="https://ntfy.sh").rstrip("/")
-        url = f"{server}/{topic}"
     return {
-        "url": url,
+        "url": url or f"{server}/{topic}",       # raw 模式用得到
+        "base": base,                            # json 模式发到服务器根, 主题放正文
+        "topic": topic,
+        "mode": _env("NTFY_MODE", default="json").lower(),
         "token": _env("NTFY_TOKEN"),
-        "title": _env("NTFY_TITLE", default="FGO 签到"),
+        "title": _env("NOTIFY_TITLE", default=_env("NTFY_TITLE", default="FGO 签到")),
         "priority": _env("NTFY_PRIORITY", default="3"),
         "tags": _env("NTFY_TAGS"),
     }
@@ -110,17 +129,49 @@ def should_send(ok: bool) -> bool:
 
 # ---------------- 请求构造（与网络分离，便于离线自检） ----------------
 
+def _priority(cfg: dict, ok: bool) -> int:
+    """失败固定 4；成功用配置值（非法值回落 3，超出 1-5 截断）。"""
+    if not ok:
+        return 4
+    try:
+        return max(1, min(5, int(cfg.get("priority") or 3)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _tags(cfg: dict) -> list[str]:
+    return [t.strip() for t in str(cfg.get("tags") or "").split(",") if t.strip()]
+
+
 def ntfy_request(cfg: dict, text: str, ok: bool = True) -> tuple[str, dict, bytes]:
-    headers = {
-        "Title": cfg["title"],
-        "Priority": "4" if not ok else str(cfg.get("priority") or "3"),
-        "Markdown": "no",
+    """构造 ntfy 请求。默认走 JSON 发布（UTF-8 正文），中文标题不会踩 HTTP 头的 latin-1 限制。"""
+    if (cfg.get("mode") or "json") == "raw":
+        # HTTP 头只能是 latin-1: 标题里的非 ASCII 字符只能丢掉, 否则发送时报 UnicodeEncodeError
+        title = str(cfg.get("title") or "").encode("latin-1", "ignore").decode("latin-1").strip()
+        headers = {"Priority": str(_priority(cfg, ok)), "Markdown": "no"}
+        if title:
+            headers["Title"] = title
+        tags = _tags(cfg)
+        if tags:
+            headers["Tags"] = ",".join(tags)
+        if cfg.get("token"):
+            headers["Authorization"] = f"Bearer {cfg['token']}"
+        return cfg["url"], headers, text.encode("utf-8")
+
+    payload: dict = {
+        "topic": cfg["topic"],
+        "message": text,
+        "title": str(cfg.get("title") or ""),
+        "priority": _priority(cfg, ok),
     }
-    if cfg.get("tags"):
-        headers["Tags"] = cfg["tags"]
+    tags = _tags(cfg)
+    if tags:
+        payload["tags"] = tags
+    headers = {"Content-Type": "application/json"}
     if cfg.get("token"):
         headers["Authorization"] = f"Bearer {cfg['token']}"
-    return cfg["url"], headers, text.encode("utf-8")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    return cfg["base"], headers, body
 
 
 def telegram_request(cfg: dict, text: str, ok: bool = True) -> tuple[str, dict]:
