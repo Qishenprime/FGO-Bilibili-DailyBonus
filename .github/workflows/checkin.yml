@@ -29,6 +29,15 @@ jobs:
           FGO_APPLE_NUM: ${{ vars.FGO_APPLE_NUM || '0' }}
           # AP 达到该阈值才开始合成 (默认120; 设为 max = AP满了才合成); 也在仓库 Settings > Variables 设置
           FGO_APPLE_AP_MIN: ${{ vars.FGO_APPLE_AP_MIN || '120' }}
+          # 剧情池每日免费单抽 (可选): 不设 FGO_GACHA_ID 则该功能完全关闭;
+          # 设了 id 但 FGO_GACHA_DRAW 不为 1 时只做检查(不抽卡)
+          FGO_GACHA_ID: ${{ vars.FGO_GACHA_ID || '' }}
+          FGO_GACHA_DRAW: ${{ vars.FGO_GACHA_DRAW || '0' }}
+          FGO_GACHA_NUM: ${{ vars.FGO_GACHA_NUM || '1' }}
+          # 剧情池的免费标记平时不会下发, 所以云端要显式声明"这个 id 就是免费池"
+          FGO_GACHA_ASSUME_FREE: ${{ vars.FGO_GACHA_ASSUME_FREE || '0' }}
+          # 免费活动窗口; 默认 2026-12-31(国服十周年活动结束即自动停手)
+          FGO_GACHA_FREE_UNTIL: ${{ vars.FGO_GACHA_FREE_UNTIL || '2026-12-31' }}
 
       - name: Sync refreshed token back to repo secret
         if: always()

@@ -8,3 +8,5 @@ __pycache__/
 *.log
 captured_keys.log
 mitm_*.log
+gacha.json
+*_auth.json
