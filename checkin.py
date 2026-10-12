@@ -14,6 +14,7 @@ import time
 
 import fgo_cn
 import gacha
+import notify
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -180,12 +181,58 @@ def gacha_summary(res: dict | None) -> str:
     return "\n".join(lines)
 
 
+def build_report(payload: dict, apple: dict | None, gacha_res: dict | None,
+                 elapsed: float) -> str:
+    """把签到结果拼成一段文本(与控制台输出一致, 也是推送给 ntfy/TG 的正文)。"""
+    lines = ["===== 签到成功 =====", summarize(payload)]
+    if apple is not None:
+        if apple.get("ap_before") is not None:
+            tail = f" (AP {apple['ap_before']}" + (
+                f"→{apple['ap_after']})" if apple.get("ap_after") is not None else ")")
+        else:
+            tail = ""
+        if apple["converted"]:
+            lines.append(f"苹果合成: {apple['converted']} 个 ({apple['name']}){tail}")
+        elif apple["errors"] and "未达合成阈值" in apple["errors"][0]:
+            eta = apple.get("eta_seconds")
+            eta_txt = ""
+            if eta:
+                h, m = divmod(round(eta / 60), 60)
+                eta_txt = f", 约 {h}小时{m}分钟后达到阈值" if h else f", 约{m}分钟后达到阈值"
+            lines.append(f"苹果合成: 跳过, {apple['errors'][0]}{eta_txt}")
+        else:
+            lines.append(f"苹果合成: 未完成 ({'; '.join(apple['errors']) or '未知原因'}){tail}")
+    summary = gacha_summary(gacha_res)
+    if summary:
+        lines.append(summary)
+    lines.append(f"[{time.strftime('%H:%M:%S')}] 完成, 耗时 {elapsed:.1f}s")
+    return "\n".join(lines)
+
+
+def finish(msg: str, ok: bool = True, payload: dict | None = None,
+           apple: dict | None = None, gacha_res: dict | None = None) -> int:
+    """统一收尾: 打印报告 + 推送。ok=False 时把 msg 当作失败原因推出去。"""
+    elapsed = time.time() - _START
+    if ok:
+        report = build_report(payload or {}, apple, gacha_res, elapsed)
+    else:
+        report = f"{msg}\n[{time.strftime('%H:%M:%S')}] 耗时 {elapsed:.1f}s"
+    print()
+    print(report if ok else f"===== 签到失败 =====\n{report}")
+    log(f"完成, 耗时 {elapsed:.1f}s" if ok else "已结束(失败)")
+    try:
+        notify.send_report(report, ok=ok, log=log)
+    except Exception as exc:                      # 推送问题绝不影响退出码
+        log(f"推送异常(已忽略): {type(exc).__name__}: {exc}")
+    return 0 if ok else 1
+
+
 def main() -> int:
     try:
         auth, from_env, auth_src = load_auth()
     except FileNotFoundError:
-        log(f"找不到 {AUTH_FILE} 且未设置 FGO_AUTH_JSON, 请先运行  python login_qr.py  扫码登录")
-        return 1
+        return finish(f"找不到 {AUTH_FILE} 且未设置 FGO_AUTH_JSON, 请先运行  python login_qr.py  扫码登录",
+                      ok=False)
 
     try:
         apple_num = max(0, int(os.environ.get("FGO_APPLE_NUM") or 0))
@@ -214,8 +261,7 @@ def main() -> int:
     remaining = int(auth.get("expires_at") or 0) - time.time()
 
     if remaining <= 60:
-        log("B站 access_token 已过期, 请重新运行  python login_qr.py  扫码")
-        return 1
+        return finish("B站 access_token 已过期, 请重新运行  python login_qr.py  扫码", ok=False)
 
     if remaining < REFRESH_THRESHOLD and auth.get("refresh_token"):
         log(f"token 剩余 {remaining / 86400:.0f} 天, 执行自动刷新…")
@@ -253,40 +299,14 @@ def main() -> int:
                 id_param=gacha_cfg["id_param"], extra=gacha_cfg["extra"],
             )
     except fgo_cn.FgoError as exc:
-        log(f"签到失败: {exc}")
-        return 1
+        return finish(f"签到失败: {exc}", ok=False)
     except Exception as exc:
-        log(f"网络或解析错误: {type(exc).__name__}: {exc}")
-        return 1
+        return finish(f"网络或解析错误: {type(exc).__name__}: {exc}", ok=False)
     finally:
         if changed:
             save_auth(auth, from_env)
 
-    print()
-    print("===== 签到成功 =====")
-    print(summarize(payload))
-    if apple is not None:
-        if apple.get("ap_before") is not None:
-            tail = f" (AP {apple['ap_before']}" + (
-                f"→{apple['ap_after']})" if apple.get("ap_after") is not None else ")")
-        else:
-            tail = ""
-        if apple["converted"]:
-            print(f"苹果合成: {apple['converted']} 个 ({apple['name']}){tail}")
-        elif apple["errors"] and "未达合成阈值" in apple["errors"][0]:
-            eta = apple.get("eta_seconds")
-            eta_txt = ""
-            if eta:
-                h, m = divmod(round(eta / 60), 60)
-                eta_txt = f", 约 {h}小时{m}分钟后达到阈值" if h else f", 约{m}分钟后达到阈值"
-            print(f"苹果合成: 跳过, {apple['errors'][0]}{eta_txt}")
-        else:
-            print(f"苹果合成: 未完成 ({'; '.join(apple['errors']) or '未知原因'}){tail}")
-    summary = gacha_summary(gacha_res)
-    if summary:
-        print(summary)
-    log(f"完成, 耗时 {time.time() - _START:.1f}s")
-    return 0
+    return finish("", ok=True, payload=payload, apple=apple, gacha_res=gacha_res)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+feat: 签到结果推送 (ntfy / Telegram)
+
+- notify.py: 双通道推送, 全部走环境变量, 未配置即静默跳过;
+  推送失败只记一行日志, 绝不影响签到退出码; 提供 --test / --dry-run 便于配置
+- checkin.py: 报告文本抽成 build_report(), 成功与失败统一经 finish() 收口并推送,
+  失败通知正文就是失败原因(token 过期 / 网络错误 / 服务端报错)
+- CI: 透传 NTFY_* / TG_* / NOTIFY_* 变量(Secrets 或 Variables 均可)
+- selftest_notify.py: 离线自检 —— 配置解析、开关(NOTIFY_ON)、请求构造、报告文本格式
+- README: 新增「📮 签到结果推送」章节(参数一览 / 本地与云端开启 / 推送内容示例)
