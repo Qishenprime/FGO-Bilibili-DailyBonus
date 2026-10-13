@@ -159,15 +159,15 @@ PAYLOAD = {
     "cache": {
         "serverTime": 1791813409,
         "replaced": {
-            "userGame": [{"name": "Aokoちゃん", "lv": 159, "stone": 73}],
+            "userGame": [{"name": "测试御主", "lv": 150, "stone": 99}],
             "userItem": [{"itemId": 4001, "num": 0}],
         },
-        "updated": {"userLogin": [{"seqLoginCount": 4, "totalLoginCount": 1988}]},
+        "updated": {"userLogin": [{"seqLoginCount": 12, "totalLoginCount": 365}]},
     },
     "response": [],
 }
 APPLE = {"requested": 1, "converted": 0, "name": "", "ap_before": 23, "ap_after": None,
-         "errors": ["AP=23/144 < 40, 未达合成阈值"], "eta_seconds": 5100}
+         "errors": ["AP=23/140 < 40, 未达合成阈值"], "eta_seconds": 5100}
 GACHA = {"skipped": True, "notes": [],
          "state": {"reason": "今日免费单抽已使用 (freeDrawAt 晚于今日重置时刻)"}}
 report = checkin.build_report(PAYLOAD, APPLE, GACHA, 11.4)
@@ -175,10 +175,10 @@ print("\n---- 报告预览 ----")
 print(report)
 print("------------------\n")
 check("报告含签到标题", report.startswith("===== 签到成功 ====="), True)
-check("报告含御主", "御主: Aokoちゃん  Lv.159" in report, True)
-check("报告含圣晶石/呼符", "圣晶石: 73   呼符: 0" in report, True)
-check("报告含连续/累计登录", "连续登录: 4天 / 累计: 1988天" in report, True)
-check("报告含苹果跳过原因", "苹果合成: 跳过, AP=23/144 < 40, 未达合成阈值" in report, True)
+check("报告含御主", "御主: 测试御主  Lv.150" in report, True)
+check("报告含圣晶石/呼符", "圣晶石: 99   呼符: 0" in report, True)
+check("报告含连续/累计登录", "连续登录: 12天 / 累计: 365天" in report, True)
+check("报告含苹果跳过原因", "苹果合成: 跳过, AP=23/140 < 40, 未达合成阈值" in report, True)
 check("报告含 ETA", "约 1小时25分钟后达到阈值" in report, True)
 check("报告含免费单抽状态", "免费单抽: 跳过 (今日免费单抽已使用" in report, True)
 check("报告末行是耗时", report.splitlines()[-1].endswith("完成, 耗时 11.4s"), True)

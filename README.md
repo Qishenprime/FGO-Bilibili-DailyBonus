@@ -10,8 +10,6 @@
 
 - 🗓️ **每日自动签到**：通过 GitHub Actions 定时执行 `toplogin`，无需自己的服务器，无需电脑开机
 - 🍎 **自动苹果合成**（可选）：每次运行顺带把 AP 换成青铜果实（树苗 + 40AP），设置仓库 Variable `FGO_APPLE_NUM` 即可开启
-- 🎴 **剧情池每日免费单抽**（可选）：签到后顺带把当天那次免费单抽用掉（`_key=gachadraw`），只在能证明是免费次数时才出手，动过资源会告警
-- 📮 **结果推送**（可选）：签到结果推到 ntfy / Telegram，**失败也会推**；推送本身出问题不影响签到
 - 🔄 **token 自动续期**：B站 access_token 有效期 180 天，剩余不足 30 天时自动刷新并回写仓库 Secrets，**一次扫码，长期免维护**
 - 📊 **签到报告**：输出御主等级、圣晶石、呼符、连续/累计登录天数、当日签到奖励明细
 - 📱 **双平台**：支持安卓 B服、iOS B服
@@ -26,7 +24,6 @@ B站App扫码 → 获取 OAuth access_token
     → member (gamedata) → logintomembercenter (B站授权校验)
     → login (建立游戏会话) → toplogin ← 这一步即每日签到
                             → (可选) shoppurchase ← AP→青铜果实 合成
-                            → (可选) gachadraw   ← 剧情池每日免费单抽
 ```
 
 > 本项目灵感来自日服签到脚本 [hexstr/FGODailyBonus](https://github.com/hexstr/FGODailyBonus)。
@@ -63,10 +60,6 @@ python login_qr.py run "你的FGO御主名"
 
 > **（可选）开启自动苹果合成**：同页面切到 **Variables** 标签 → **New repository variable**，添加 `FGO_APPLE_NUM` = 每次运行合成的数量（如 `1`）。不设置或设为 `0` = 关闭。可再添加 `FGO_APPLE_AP_MIN`：**AP 达到该阈值才开始合成**，默认 `120`，设为 **`max`** 则 **AP 满了才换**（自动等于上限，升级后自适应）；低于阈值本次跳过、不影响签到。
 
-> **（可选）开启剧情池每日免费单抽**：同页面 **Variables** 标签加 `FGO_GACHA_ID=500139` + `FGO_GACHA_DRAW=1` + `FGO_GACHA_ASSUME_FREE=1`。参数含义与完整清单见 [🎴 剧情池每日免费单抽](#-剧情池每日免费单抽可选)；不设 `FGO_GACHA_DRAW` 时只检查、不抽卡。
-
-> **（可选）开启签到结果推送**：还是这个页面（Secrets 或 Variables 都行，建议 Secrets），加 `NTFY_URL=https://ntfy.sh/你的主题`，或 `TG_BOT_TOKEN` + `TG_CHAT_ID`。参数清单见 [📮 签到结果推送](#-签到结果推送可选)。
-
 ### 4. 启用 Actions 并验证
 
 进入你 Fork 的仓库 → **Actions** → 启用 → 选择 `FGO B服每日签到` → **Run workflow** 手动触发一次，确认日志输出 `签到成功`。
@@ -88,124 +81,6 @@ python checkin.py
 配合 **Windows 任务计划程序**每天定时执行即可。本地运行使用国内 IP，相比 GitHub Actions 的海外 IP 更不容易触发风控。
 
 本地想顺便合成苹果：`FGO_APPLE_NUM=1 python checkin.py`（Windows PowerShell 写法：`$env:FGO_APPLE_NUM="1"; python checkin.py`）。
-
-## 🎴 剧情池每日免费单抽（可选）
-
-> 国服十周年活动：剧情召唤（常驻池）每天可免费单抽一次，截止 2026-12-31。开启后每次签到顺手把这一次用掉。
-
-### 参数一览
-
-| 参数 | 位置 | 建议值 | 说明 |
-|---|---|---|---|
-| `gacha_id` / `FGO_GACHA_ID` | 本地 `gacha.json` / 云端 Variable | `500139` | 剧情池卡池 ID（国服 2026-10） |
-| `draw` / `FGO_GACHA_DRAW` | 同上 | `false` → `true` | **只有 `true` 才真正抽卡**；不设 = 只检查 |
-| `num` / `FGO_GACHA_NUM` | 同上 | `1` | 抽数 |
-| `assume_free` / `FGO_GACHA_ASSUME_FREE` | 同上 | `true` | 服务端不下发免费标记时也按免费池处理；**云端建议开启** |
-| `free_until` / `FGO_GACHA_FREE_UNTIL` | 同上 | `2026-12-31` | 活动窗口，过期自动停手 |
-| `id_param` | 同上 | `gachaId` | 卡池 ID 的参数名（**是 `gachaId`，不是 `id`**） |
-| `extra` / `FGO_GACHA_EXTRA` | 同上 | 见下 | 单抽必需的其余字段（JSON） |
-
-单抽的完整请求形态（2026-10 抓包实测；`gacha.example.json` 里已配好）：
-
-```json
-{ "gachaId": 500139, "num": 1,
-  "ticketItemId": 4001, "shopIdIndex": 1, "gachaSubId": 0, "selectBonusList": "",
-  "storyAdjustIds": "[31011,31111,...,32251]" }
-```
-
-- `ticketItemId` / `shopIdIndex` 是**兜底支付方式**（呼符 → `mstGacha.shopId1`）；**"当日免费次数有没有用掉"由服务端判定**，免费单抽与付费单抽是**同一个请求**。
-- `storyAdjustIds` 与账号的**剧情进度**相关，大版本更新后可能需要重新抓包更新。
-- 云端用 `FGO_GACHA_ID_PARAM=gachaId` + `FGO_GACHA_EXTRA`（上面这段 JSON 的字符串形式），或直接用本地 `gacha.json`。
-
-> `gacha_id` 需要更新时（换新剧情池），用 `python gacha.py --list` 取**今天有 `freeDrawAt` 记录的那一行 `gachaId`**。
-
-### 本地开启
-
-```powershell
-Copy-Item gacha.example.json gacha.json   # 已按 500139 配好, draw=false
-python gacha.py --list                    # 只读: 卡池 / 今日免费状态 / 呼符与圣晶石
-python gacha.py                           # 只检查: 今天这一次能不能免费抽
-python gacha.py --draw                    # 确认无误后再真抽(或把 gacha.json 的 draw 改成 true)
-```
-
-把 `draw` 改成 `true` 之后，`python checkin.py` 每次签到就会顺带用掉当天那次免费单抽。
-
-### 云端开启
-
-仓库 **Settings → Secrets and variables → Actions → Variables**：
-
-| Variable | 值 |
-|---|---|
-| `FGO_GACHA_ID` | `500139` |
-| `FGO_GACHA_DRAW` | `1` |
-| `FGO_GACHA_ASSUME_FREE` | `1` |
-| `FGO_GACHA_FREE_UNTIL` | `2026-12-31`（可省） |
-
-建议**先只设 `FGO_GACHA_ID` + `FGO_GACHA_ASSUME_FREE`** 手动跑一次（此时只检查、不抽卡），
-日志里看到 `免费单抽: 可用/跳过 (...)` 确认逻辑正常，再加上 `FGO_GACHA_DRAW=1`。
-
-### 行为与安全
-
-- 发抽卡请求前必须同时满足：**在活动窗口内** ∧ **该卡池是免费池**（`assume_free` 或服务端 `freeDrawFlag`）∧ **今天还没用过免费次数**（`userGacha.freeDrawAt` 早于今日重置时刻 `userGame.zerotime`）。任一不满足就只打印跳过原因、**不发请求**。
-- 抽完会核对服务端增量：**若呼符/圣晶石变少，会打出「本次不是免费抽」的告警**（输出里的 `resource` 字段）。
-- `FGO_GACHA_FREE_WINDOW=0`：关闭活动窗口校验（不推荐）；`FGO_GACHA_ID` 不设 = 该功能整体关闭。
-
-## 📮 签到结果推送（可选）
-
-> 把每次签到的结果推到 **ntfy** 或 **Telegram**；失败时也会推 —— 这条比成功通知更有用。
-> **推送失败绝不影响签到本身**（只记一行日志，退出码不变）。
-
-### 参数一览
-
-| 参数 | 位置 | 建议值 | 说明 |
-|---|---|---|---|
-| `NOTIFY_ON` | Secret / Variable | `always` | `always` 成功失败都推 / `fail` 只推失败 / `off` 关闭 |
-| `NOTIFY_TITLE` | 同上 | `FGO 签到` | ntfy 的标题 |
-| `NTFY_URL` | 同上 | `https://ntfy.sh/你的主题` | ntfy 推送地址（自建服务器换域名）；**主题名等同密码，建议放 Secret** |
-| `NTFY_TOPIC` / `NTFY_SERVER` | 同上 | — | 不想写整条 URL 时用：主题名 + 服务器（默认 `https://ntfy.sh`） |
-| `NTFY_TOKEN` | Secret | 空 | 主题开了写保护时填（Bearer） |
-| `NTFY_MODE` | 同上 | `json` | 默认走 ntfy 的 **JSON 发布**（标题/正文用 UTF-8，中文标题没问题）；设成 `raw` 则用 HTTP 头发布，而 HTTP 头只能是 latin-1，**中文标题只会剩下英文字符** |
-| `NTFY_PRIORITY` | 同上 | `3` | 1–5；**失败自动用 4** |
-| `NTFY_TAGS` | 同上 | 空 | 逗号分隔，如 `video_game,white_check_mark` |
-| `TG_BOT_TOKEN` | Secret | — | [@BotFather](https://t.me/BotFather) 给的 token |
-| `TG_CHAT_ID` | 同上 | — | 目标 chat id（私聊填自己的 id；群/频道先把 bot 拉进去） |
-| `TG_PARSE_MODE` | 同上 | 空 | 一般别填：日志里有 `<` `>`，纯文本最稳 |
-
-### 本地开启
-
-```powershell
-$env:NTFY_URL="https://ntfy.sh/你的主题"     # 或 $env:TG_BOT_TOKEN / $env:TG_CHAT_ID
-python notify.py --dry-run     # 只打印将发送的 URL 与正文, 不联网
-python notify.py --test        # 真发一条
-```
-
-ntfy：手机装 App 订阅同一主题即可（[ntfy.sh](https://ntfy.sh) 或自建）。Telegram：找 @BotFather 建 bot，
-`TG_CHAT_ID` 可以先给 bot 发一条消息再访问 `https://api.telegram.org/bot<token>/getUpdates` 取 `chat.id`。
-
-### 云端开启
-
-仓库 **Settings → Secrets and variables → Actions** 里加 `NTFY_URL`（或 `NTFY_TOPIC`）/`TG_BOT_TOKEN`/`TG_CHAT_ID` 等；
-workflow 已把这些变量全部透传（见 `.github/workflows/checkin.yml` 末尾那段注释）。
-
-### 推送内容
-
-正文就是控制台那段报告，开头加 ✅/❌ 状态行，例如：
-
-```
-✅ FGO 签到成功
-===== 签到成功 =====
-御主: Aokoちゃん  Lv.159
-圣晶石: 73   呼符: 0
-连续登录: 4天 / 累计: 1988天
-服务器时间: 2026-10-12 14:24:45
-苹果合成: 跳过, AP=23/144 < 40, 未达合成阈值, 约 1小时25分钟后达到阈值
-免费单抽: 跳过 (今日免费单抽已使用 (freeDrawAt 晚于今日重置时刻))
-[14:24:46] 完成, 耗时 11.4s
-```
-
-失败时正文是失败原因（token 过期 / 网络错误 / 服务端报错），例如 `❌ FGO 签到失败` + `签到失败: ...`。
-
-> 本地直连 Telegram 不通时，先设 `HTTPS_PROXY`（如 `$env:HTTPS_PROXY="http://127.0.0.1:7890"`），requests 会自动走代理。
 
 ## 🔄 token 自动续期说明
 
@@ -233,15 +108,6 @@ A: 每个果实消耗 1 个树苗 + 40 AP。仅当 AP ≥ `FGO_APPLE_AP_MIN`（�
 
 **Q: 会封号吗？**
 A: 无法承诺。第三方模拟客户端登录存在触发风控/违反用户协议的可能，请仅用于自己的账号并自行评估风险。
-
-**Q: 免费单抽会花掉我的圣晶石/呼符吗？**
-A: 默认不会：不设 `FGO_GACHA_DRAW=1` 时只检查不抽；开了之后也要同时满足「活动窗口内 + 卡池标记为免费 + 今日免费次数没用过」才会发抽卡请求，抽完还会核对资源是否真的没变。真要出问题也是"少抽一次"而不是"多花石头"。
-
-**Q: 剧情池的卡池 ID 变了怎么办？**
-A: 用 `python gacha.py --list` 看哪一行今天有 `freeDrawAt` 记录，那行的 `gachaId` 就是当前剧情池，更新 `FGO_GACHA_ID`（或 `gacha.json` 的 `gacha_id`）即可。
-
-**Q: 跑脚本时游戏会掉线吗？**
-A: 会。脚本登录会顶掉游戏会话，所以别在游戏在线时跑 `checkin.py` / `gacha.py`，反过来也一样。
 
 ## ⚠️ 免责声明
 
