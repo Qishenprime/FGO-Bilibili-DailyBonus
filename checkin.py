@@ -62,6 +62,20 @@ def save_auth(auth: dict, from_env: bool) -> None:
             json.dump(auth, f, ensure_ascii=False, indent=2)
 
 
+def item_num(payload: dict, item_id: int) -> int | None:
+    """取道具当前数量: 优先 updated(本次最新增量), 再退 replaced(整表快照)。
+
+    实测差别: `replaced.userItem` 是"登录前"的快照, 当天新发的奖励(例如呼符)
+    出现在 `updated.userItem` 里 —— 只看 replaced 会读到旧值(线上就出现过 0 vs 7)。
+    """
+    cache = payload.get("cache") or {}
+    for seg in ("updated", "replaced"):
+        for row in (cache.get(seg) or {}).get("userItem") or []:
+            if isinstance(row, dict) and int(row.get("itemId") or 0) == item_id:
+                return int(row.get("num") or 0)
+    return None
+
+
 def summarize(payload: dict) -> str:
     """从 toplogin 响应中提取账号信息与签到奖励。"""
     lines = []
@@ -71,13 +85,10 @@ def summarize(payload: dict) -> str:
 
     user_game = (replaced.get("userGame") or [{}])[0]
     if user_game:
-        ticket = 0
-        for item in replaced.get("userItem") or []:
-            if item.get("itemId") == 4001:
-                ticket = item.get("num", 0)
-                break
+        ticket = item_num(payload, 4001)
         lines.append(f"御主: {user_game.get('name', '?')}  Lv.{user_game.get('lv', '?')}")
-        lines.append(f"圣晶石: {user_game.get('stone', '?')}   呼符: {ticket}")
+        lines.append(f"圣晶石: {user_game.get('stone', '?')}   "
+                     f"呼符: {ticket if ticket is not None else '?'}")
 
     user_login = (updated.get("userLogin") or [{}])[0]
     if user_login:
@@ -160,7 +171,7 @@ def gacha_env() -> dict:
 
 
 def gacha_summary(res: dict | None) -> str:
-    """把抽卡结果压成一行/一块文本。"""
+    """把抽卡结果压成一行/一块文本。抽卡失败时加 ⚠️ 标记, 方便在通知里一眼看到。"""
     if res is None:
         return ""
     if res.get("skipped"):
@@ -172,13 +183,20 @@ def gacha_summary(res: dict | None) -> str:
     if not result:
         return f"免费单抽: 已检查 id={pid} {name}"
     if not result.get("ok"):
-        return f"免费单抽: 失败 resCode={result.get('code')} {result.get('fail')}"
+        return (f"⚠️ 免费单抽: 失败 resCode={result.get('code')} {result.get('fail')}"
+                f"  (id={pid}; 说明卡池 id 或请求参数不对, 需要抓一次真实单抽核对)")
     lines = [f"免费单抽: 成功 id={pid} {name} 判定={result.get('verdict')}"]
     for c in result.get("cards") or []:
         lines.append("  - " + " ".join(f"{k}={v}" for k, v in c.items()))
     if result.get("resource"):
         lines.append(f"  资源变化: {json.dumps(result['resource'], ensure_ascii=False)}")
     return "\n".join(lines)
+
+
+def gacha_warned(gacha_res: dict | None) -> bool:
+    """抽卡是否"试了但失败"(用于把通知标成告警色, 而不是一片祥和)。"""
+    result = (gacha_res or {}).get("result") or {}
+    return bool(result) and not result.get("ok")
 
 
 def build_report(payload: dict, apple: dict | None, gacha_res: dict | None,
@@ -211,17 +229,22 @@ def build_report(payload: dict, apple: dict | None, gacha_res: dict | None,
 
 def finish(msg: str, ok: bool = True, payload: dict | None = None,
            apple: dict | None = None, gacha_res: dict | None = None) -> int:
-    """统一收尾: 打印报告 + 推送。ok=False 时把 msg 当作失败原因推出去。"""
+    """统一收尾: 打印报告 + 推送。ok=False 时把 msg 当作失败原因推出去。
+
+    报告正文末行已经是"完成, 耗时 …", 所以这里不再单独打一遍(线上出现过重复行)。
+    """
     elapsed = time.time() - _START
+    warn = ok and gacha_warned(gacha_res)            # 签到成功但抽卡失败 -> 告警样式
     if ok:
         report = build_report(payload or {}, apple, gacha_res, elapsed)
     else:
         report = f"{msg}\n[{time.strftime('%H:%M:%S')}] 耗时 {elapsed:.1f}s"
     print()
     print(report if ok else f"===== 签到失败 =====\n{report}")
-    log(f"完成, 耗时 {elapsed:.1f}s" if ok else "已结束(失败)")
+    if warn:
+        log("注意: 本次抽卡尝试失败(其余步骤正常), 通知已按告警样式发送")
     try:
-        notify.send_report(report, ok=ok, log=log)
+        notify.send_report(report, ok=ok, warn=warn, log=log)
     except Exception as exc:                      # 推送问题绝不影响退出码
         log(f"推送异常(已忽略): {type(exc).__name__}: {exc}")
     return 0 if ok else 1

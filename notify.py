@@ -51,6 +51,16 @@ TIMEOUT = (8, 25)
 TG_TEXT_LIMIT = 3900          # Telegram 上限 4096，留点余量
 OK_TAG = "✅"
 FAIL_TAG = "❌"
+WARN_TAG = "⚠️"
+
+
+def header_line(ok: bool = True, warn: bool = False) -> str:
+    """通知正文第一行: 成功 / 告警 / 失败。"""
+    if not ok:
+        return f"{FAIL_TAG} FGO 签到失败"
+    if warn:
+        return f"{WARN_TAG} FGO 签到成功(有告警)"
+    return f"{OK_TAG} FGO 签到成功"
 
 
 def _env(*names: str, default: str = "") -> str:
@@ -129,26 +139,28 @@ def should_send(ok: bool) -> bool:
 
 # ---------------- 请求构造（与网络分离，便于离线自检） ----------------
 
-def _priority(cfg: dict, ok: bool) -> int:
-    """失败固定 4；成功用配置值（非法值回落 3，超出 1-5 截断）。"""
+def _priority(cfg: dict, ok: bool, warn: bool = False) -> int:
+    """失败固定 4；告警至少 4；成功用配置值（非法值回落 3，超出 1-5 截断）。"""
     if not ok:
         return 4
     try:
-        return max(1, min(5, int(cfg.get("priority") or 3)))
+        value = max(1, min(5, int(cfg.get("priority") or 3)))
     except (TypeError, ValueError):
-        return 3
+        value = 3
+    return max(value, 4) if warn else value
 
 
 def _tags(cfg: dict) -> list[str]:
     return [t.strip() for t in str(cfg.get("tags") or "").split(",") if t.strip()]
 
 
-def ntfy_request(cfg: dict, text: str, ok: bool = True) -> tuple[str, dict, bytes]:
+def ntfy_request(cfg: dict, text: str, ok: bool = True,
+                 warn: bool = False) -> tuple[str, dict, bytes]:
     """构造 ntfy 请求。默认走 JSON 发布（UTF-8 正文），中文标题不会踩 HTTP 头的 latin-1 限制。"""
     if (cfg.get("mode") or "json") == "raw":
         # HTTP 头只能是 latin-1: 标题里的非 ASCII 字符只能丢掉, 否则发送时报 UnicodeEncodeError
         title = str(cfg.get("title") or "").encode("latin-1", "ignore").decode("latin-1").strip()
-        headers = {"Priority": str(_priority(cfg, ok)), "Markdown": "no"}
+        headers = {"Priority": str(_priority(cfg, ok, warn)), "Markdown": "no"}
         if title:
             headers["Title"] = title
         tags = _tags(cfg)
@@ -162,7 +174,7 @@ def ntfy_request(cfg: dict, text: str, ok: bool = True) -> tuple[str, dict, byte
         "topic": cfg["topic"],
         "message": text,
         "title": str(cfg.get("title") or ""),
-        "priority": _priority(cfg, ok),
+        "priority": _priority(cfg, ok, warn),
     }
     tags = _tags(cfg)
     if tags:
@@ -188,15 +200,15 @@ def telegram_request(cfg: dict, text: str, ok: bool = True) -> tuple[str, dict]:
 
 # ---------------- 发送 ----------------
 
-def send_ntfy(cfg: dict, text: str, ok: bool = True) -> tuple[bool, str]:
-    url, headers, body = ntfy_request(cfg, text, ok)
+def send_ntfy(cfg: dict, text: str, ok: bool = True, warn: bool = False) -> tuple[bool, str]:
+    url, headers, body = ntfy_request(cfg, text, ok, warn)
     resp = requests.post(url, data=body, headers=headers, timeout=TIMEOUT)
     if resp.status_code >= 300:
         return False, f"HTTP {resp.status_code}: {resp.text[:120]}"
     return True, f"HTTP {resp.status_code}"
 
 
-def send_telegram(cfg: dict, text: str, ok: bool = True) -> tuple[bool, str]:
+def send_telegram(cfg: dict, text: str, ok: bool = True, warn: bool = False) -> tuple[bool, str]:
     url, data = telegram_request(cfg, text, ok)
     resp = requests.post(url, data=data, timeout=TIMEOUT)
     detail = resp.text[:160]
@@ -211,18 +223,19 @@ def send_telegram(cfg: dict, text: str, ok: bool = True) -> tuple[bool, str]:
     return True, "ok"
 
 
-def send_report(text: str, ok: bool = True, log=print) -> list[tuple[str, bool, str]]:
+def send_report(text: str, ok: bool = True, warn: bool = False,
+                log=print) -> list[tuple[str, bool, str]]:
     """把文本推到所有已配置的通道。返回 [(通道, 是否成功, 详情)]；任何异常都不会抛出。"""
     if not should_send(ok):
         return []
-    head = f"{OK_TAG} FGO 签到成功" if ok else f"{FAIL_TAG} FGO 签到失败"
+    head = header_line(ok, warn)
     body = text if text.startswith(head) else f"{head}\n{text}"
     body = body.strip()
     results: list[tuple[str, bool, str]] = []
     for name, cfg in channels():
         try:
-            success, detail = (send_ntfy(cfg, body, ok) if name == "ntfy"
-                               else send_telegram(cfg, body, ok))
+            success, detail = (send_ntfy(cfg, body, ok, warn) if name == "ntfy"
+                               else send_telegram(cfg, body, ok, warn))
         except Exception as exc:                      # 推送失败绝不能影响签到
             success, detail = False, f"{type(exc).__name__}: {exc}"
         results.append((name, success, detail))
@@ -235,12 +248,14 @@ def main() -> int:
     parser.add_argument("--test", action="store_true", help="发送一条测试消息")
     parser.add_argument("--dry-run", action="store_true", help="只打印将发送的内容, 不联网")
     parser.add_argument("--text", default="", help="发送指定文本")
-    parser.add_argument("--fail", action="store_true", help="按失败通知发送(用于验证告警样式)")
+    parser.add_argument("--fail", action="store_true", help="按失败通知发送(用于验证失败样式)")
+    parser.add_argument("--warn", action="store_true", help="按告警通知发送(用于验证告警样式)")
     args = parser.parse_args()
 
     text = args.text or (f"这是一条测试消息。\n时间: "
                          f"{time.strftime('%Y-%m-%d %H:%M:%S')}")
     ok = not args.fail
+    warn = args.warn and ok
     conf = channels()
     print(f"NOTIFY_ON = {notify_mode()}")
     print(f"已配置通道: {[name for name, _ in conf] or '无 —— 请先设置 NTFY_URL 或 TG_BOT_TOKEN/TG_CHAT_ID'}")
@@ -248,11 +263,10 @@ def main() -> int:
         return 1
 
     if args.dry_run:
-        head = f"{OK_TAG} FGO 签到成功" if ok else f"{FAIL_TAG} FGO 签到失败"
-        body = f"{head}\n{text}"
+        body = f"{header_line(ok, warn)}\n{text}"
         for name, cfg in conf:
             if name == "ntfy":
-                url, headers, payload = ntfy_request(cfg, body, ok)
+                url, headers, payload = ntfy_request(cfg, body, ok, warn)
                 safe = dict(headers)
                 if "Authorization" in safe:
                     safe["Authorization"] = "Bearer <已隐藏>"
@@ -268,7 +282,7 @@ def main() -> int:
     if not args.test and not args.text:
         parser.print_help()
         return 1
-    results = send_report(text, ok=ok)
+    results = send_report(text, ok=ok, warn=warn)
     failed = [r for r in results if not r[1]]
     print("\n全部成功 ✓" if results and not failed else f"\n失败 {len(failed)} 条")
     return 0 if results and not failed else 1

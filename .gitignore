@@ -10,3 +10,4 @@ captured_keys.log
 mitm_*.log
 gacha.json
 *_auth.json
+_capture/

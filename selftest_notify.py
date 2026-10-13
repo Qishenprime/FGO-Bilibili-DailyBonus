@@ -116,10 +116,20 @@ with Env():
     check("json 标签数组", payload["tags"], ["video_game", "a"])
     check("失败 -> 优先级 4", json.loads(notify.ntfy_request(NTFY_CFG, "x", ok=False)[2])
           ["priority"], 4)
+    check("告警 -> 优先级至少 4",
+          json.loads(notify.ntfy_request(NTFY_CFG, "x", ok=True, warn=True)[2])["priority"], 4)
+    check("告警时低优先级也提到 4",
+          json.loads(notify.ntfy_request(dict(NTFY_CFG, priority="1"), "x", ok=True,
+                                        warn=True)[2])["priority"], 4)
     check("非法优先级回落 3", json.loads(notify.ntfy_request(dict(NTFY_CFG, priority="abc"),
                                                             "x")[2])["priority"], 3)
     check("优先级截断到 5", json.loads(notify.ntfy_request(dict(NTFY_CFG, priority="9"),
                                                           "x")[2])["priority"], 5)
+
+    # 通知正文首行(成功/告警/失败三态)
+    check("首行: 成功", notify.header_line(True, False), "✅ FGO 签到成功")
+    check("首行: 告警", notify.header_line(True, True), "⚠️ FGO 签到成功(有告警)")
+    check("首行: 失败", notify.header_line(False, False), "❌ FGO 签到失败")
 
     # raw 模式(HTTP 头发布)必须能容忍中文标题: 只保留 ASCII 部分而不是崩
     raw_cfg = dict(NTFY_CFG, mode="raw")
@@ -172,6 +182,29 @@ check("报告含苹果跳过原因", "苹果合成: 跳过, AP=23/144 < 40, 未�
 check("报告含 ETA", "约 1小时25分钟后达到阈值" in report, True)
 check("报告含免费单抽状态", "免费单抽: 跳过 (今日免费单抽已使用" in report, True)
 check("报告末行是耗时", report.splitlines()[-1].endswith("完成, 耗时 11.4s"), True)
+
+# 抽卡"试了但失败" -> 报告带 ⚠️, 且 finish 走告警样式
+GACHA_FAIL = {"skipped": False, "pool_id": 500139, "pool_name": "",
+              "result": {"ok": False, "code": "99", "fail": "扭蛋ID有误"}}
+report2 = checkin.build_report(PAYLOAD, APPLE, GACHA_FAIL, 9.9)
+print("\n---- 抽卡失败时的报告 ----")
+print(report2)
+print("--------------------------\n")
+check("抽卡失败 -> 行首 ⚠️", "⚠️ 免费单抽: 失败 resCode=99 扭蛋ID有误" in report2, True)
+check("抽卡失败 -> 提示需要核对 id", "需要抓一次真实单抽核对" in report2, True)
+check("gacha_warned(失败) 为真", checkin.gacha_warned(GACHA_FAIL), True)
+check("gacha_warned(跳过) 为假", checkin.gacha_warned(GACHA), False)
+check("gacha_warned(None) 为假", checkin.gacha_warned(None), False)
+
+# 呼符读数: updated 比 replaced 新, 必须优先取 updated(线上出现过 0 vs 7)
+FRESH = {"cache": {"updated": {"userItem": [{"itemId": 4001, "num": 7}]},
+                   "replaced": {"userGame": [{"name": "X", "lv": 1, "stone": 1}],
+                                "userItem": [{"itemId": 4001, "num": 0}]}}}
+check("呼符取 updated 的新值", checkin.item_num(FRESH, 4001), 7)
+check("summarize 用新值", "呼符: 7" in checkin.summarize(FRESH), True)
+OLD_ONLY = {"cache": {"updated": {}, "replaced": {"userItem": [{"itemId": 4001, "num": 3}]}}}
+check("只有 replaced 时退回快照", checkin.item_num(OLD_ONLY, 4001), 3)
+check("都没有时返回 None", checkin.item_num({}, 4001), None)
 
 check("失败报告带原因", checkin.build_report({}, None, None, 3.2).splitlines()[0],
       "===== 签到成功 =====")
