@@ -42,6 +42,20 @@ TIMEOUT = (12, 35)
 APPLE_SHOP_ID = 13000000  # 主界面 AP 加号: 树苗+40AP -> 青铜果实 (shoppurchase)
 APPLE_COST = 40           # 一次合成消耗 AP (另需树苗)
 AP_RECOVER_SECONDS = 300  # AP 每 300 秒回复 1 点 (已实测确认)
+GAMETOP_CACHE = "gametop_cache.json"   # 版本元数据本地缓存(元数据站点抖动时兜底)
+GAMETOP_CACHE_MAX_AGE = 7 * 86400      # 缓存最多用 7 天(版本太旧登录会被服务端拒)
+
+
+def domestic_session() -> requests.Session:
+    """国内域名(B站 / chaldea 元数据)专用会话: **忽略系统代理**。
+
+    本机开着 Clash 之类并启用"系统代理"时, requests 会把这些国内域名也塞进代理,
+    实测会 SSL EOF / 超时, 整条签到直接失败(CI 上没有代理, 所以只在本地复现)。
+    """
+    s = requests.Session()
+    s.trust_env = False
+    return s
+
 
 PLATFORMS: dict[str, dict[str, Any]] = {
     "android_bili": {
@@ -81,7 +95,7 @@ def _sign_tv(params: dict[str, Any]) -> dict[str, str]:
 
 
 def _passport_session() -> requests.Session:
-    s = requests.Session()
+    s = domestic_session()
     s.headers.update({
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json, text/plain, */*",
@@ -303,25 +317,53 @@ def ap_state(payload: dict[str, Any]) -> dict[str, int]:
             "server_time": server_time}
 
 
+def _read_gametop_cache() -> dict[str, Any] | None:
+    """读本地缓存的版本元数据(元数据站点挂掉时兜底); 太旧就不用。"""
+    try:
+        with open(GAMETOP_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    age = time.time() - float(data.get("cached_at") or 0)
+    if age > GAMETOP_CACHE_MAX_AGE:
+        return None
+    cn = data.get("CN")
+    return cn if isinstance(cn, dict) else None
+
+
+def _write_gametop_cache(cn: dict[str, Any]) -> None:
+    try:
+        with open(GAMETOP_CACHE, "w", encoding="utf-8") as f:
+            json.dump({"cached_at": time.time(), "CN": cn}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 def fetch_game_top() -> dict[str, Any]:
+    sess = domestic_session()          # 国内元数据站点, 不走系统代理
     last_exc: Exception | None = None
     for url in CHALDEA_GAMETOP_URLS:
         try:
-            r = requests.get(url, timeout=TIMEOUT)
+            r = sess.get(url, timeout=TIMEOUT)
             r.raise_for_status()
             cn = r.json().get("CN")
             if isinstance(cn, dict):
                 try:
-                    rr = requests.get(FGO_CONFIG_URL, timeout=TIMEOUT)
+                    rr = sess.get(FGO_CONFIG_URL, timeout=TIMEOUT)
                     m = re.search(r"FateGO_(\d+\.\d+\.\d+)_", rr.text) or \
                         re.search(r'"latest_version"\s*:\s*"(\d+\.\d+\.\d+)"', rr.text)
                     if m:
                         cn["appVer"] = m.group(1)
                 except Exception:
                     pass
+                _write_gametop_cache(cn)
                 return cn
         except Exception as exc:
             last_exc = exc
+    cached = _read_gametop_cache()
+    if cached:
+        print(f"提示: 版本元数据站点不可用({last_exc}), 改用本地缓存 {GAMETOP_CACHE}")
+        return cached
     raise FgoError(f"无法获取国服版本元数据: {last_exc}")
 
 
@@ -440,7 +482,7 @@ def open_session(access_token: str, mid: int, username: str, nickname: str,
     os_name, ptype = platform["os"], platform["ptype"]
     log_cb(f"连接 {platform['label']}, 当前版本 FGO {app_ver}")
 
-    sess = requests.Session()
+    sess = domestic_session()          # 游戏服务器都在国内, 不走系统代理
     headers = _game_headers(unity_ver, platform)
     app_start = time.monotonic() - 30.0
 
@@ -672,7 +714,7 @@ def user_game_row(*payloads: dict[str, Any]) -> dict[str, Any]:
 def user_item_num(payload: dict[str, Any], item_id: int) -> int | None:
     """从响应 cache 里读某个道具的当前数量(找得到才返回)。"""
     cache = payload.get("cache") or {}
-    for seg in ("replaced", "updated"):
+    for seg in ("updated", "replaced"):   # updated 是本次增量(更新), replaced 是登录前快照
         for row in (cache.get(seg) or {}).get("userItem") or []:
             if isinstance(row, dict) and int(row.get("itemId") or 0) == item_id:
                 return int(row.get("num") or 0)

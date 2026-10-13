@@ -11,3 +11,4 @@ mitm_*.log
 gacha.json
 *_auth.json
 _capture/
+gametop_cache.json
