@@ -661,6 +661,21 @@ GACHA_DRAW_KEY = "gachadraw"
 GACHA_STORY_HINTS = ("剧情", "故事", "ストーリー", "story")
 ITEM_TICKET = 4001  # 呼符
 
+# 抽卡请求的真实形态(2026-10-13 抓包实测, 单抽):
+#   gachaId=500139  num=1  ticketItemId=4001  shopIdIndex=1  gachaSubId=0
+#   storyAdjustIds=[31011,...,32251]  selectBonusList=
+# 注意参数名是 gachaId(不是 id); 少了 ticketItemId/shopIdIndex/storyAdjustIds 会被判"扭蛋ID有误"。
+# 免费单抽与付费单抽是**同一个请求**: 当日免费次数有没有用掉由服务端判定(freeDrawAt)。
+GACHA_ID_PARAM = "gachaId"
+GACHA_DRAW_DEFAULTS: dict[str, Any] = {
+    "ticketItemId": ITEM_TICKET,   # 兜底支付道具(呼符); 服务端优先用当日免费次数
+    "shopIdIndex": 1,              # 1 -> mstGacha.shopId1
+    "gachaSubId": 0,
+    "selectBonusList": "",
+    # 剧情进度相关的 adjust id 列表(抓包值; 剧情有大更新后可能需要重抓)
+    "storyAdjustIds": "",
+}
+
 
 def gacha_master_rows(*payloads: dict[str, Any]) -> list[dict[str, Any]]:
     """从若干响应里收集出现过的 mstGacha 行(去重, 按 id 排序)。
@@ -769,7 +784,8 @@ def free_draw_state(gacha_id: int, pool_row: dict[str, Any] | None,
 
 
 def gacha_draw(session: GameSession, gacha_id: int, num: int = 1,
-               id_param: str = "id", extra: dict[str, Any] | None = None) -> dict[str, Any]:
+               id_param: str = GACHA_ID_PARAM,
+               extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """发一次抽卡请求 (_key=gachadraw), 返回原始 payload。
 
     参数形态以实测为准: 确认 `id` + `num` 会被服务端接受(参数名校验通过),
@@ -777,10 +793,30 @@ def gacha_draw(session: GameSession, gacha_id: int, num: int = 1,
     参数名/额外字段(例如 PHP 数组形态 gachaId[] 或带 type), 用 id_param/extra 覆盖即可,
     不必改代码(gacha.json 里可配 id_param / extra)。
     """
-    form: dict[str, Any] = {id_param: int(gacha_id), "num": int(num)}
+    merged = dict(GACHA_DRAW_DEFAULTS)
     if extra:
-        form.update(extra)
+        merged.update({k: v for k, v in extra.items() if v is not None})
+    form: dict[str, Any] = {id_param: int(gacha_id), "num": int(num)}
+    form.update(merged)
     return session.action(GACHA_DRAW_KEY, form)
+
+
+# gachaInfos[].type 的含义(按抓包观察): 1 = 从者; 其它类型原样带出
+GACHA_CARD_KIND = {1: "从者", 2: "概念礼装", 3: "道具"}
+
+
+def _cards_from_gacha_infos(success: dict[str, Any]) -> list[dict[str, Any]]:
+    """从 success.gachaInfos 提取抽到的卡(真实字段: type/objectId/isNew/limitCount/num)。"""
+    cards = []
+    for info in success.get("gachaInfos") or []:
+        if not isinstance(info, dict):
+            continue
+        kind = GACHA_CARD_KIND.get(int(info.get("type") or 0), f"type={info.get('type')}")
+        card = {"kind": kind, "objectId": info.get("objectId"), "isNew": info.get("isNew")}
+        if info.get("limitCount"):
+            card["limitCount"] = info["limitCount"]
+        cards.append(card)
+    return cards
 
 
 def _walk_cards(node: Any, out: list[dict[str, Any]], depth: int = 0) -> None:
@@ -833,7 +869,12 @@ def gacha_draw_result(payload: dict[str, Any], gacha_id: int | None = None,
         success = item.get("success")
         if isinstance(success, dict):
             res["success_keys"] = [k for k in success if k != "cache"]
-            _walk_cards(success, res["cards"])
+            res["cards"] = _cards_from_gacha_infos(success)
+            for key in ("bonusGiftIds", "extraGiftIds", "gachaExtraGifts"):
+                if success.get(key):
+                    res["bonus"] = success[key]
+            if not res["cards"]:          # 兜底: 结构与预期不同时再泛化扫描
+                _walk_cards(success, res["cards"])
 
     cache = payload.get("cache") or {}
     updated = cache.get("updated") or {}
@@ -881,7 +922,7 @@ def daily_free_draw(session: GameSession, toplogin_payload: dict[str, Any], *,
                     gacha_id: int | None = None, num: int = 1,
                     assume_free: bool = False, free_until: int | None = None,
                     do_draw: bool = True, log_cb=print,
-                    id_param: str = "id",
+                    id_param: str = GACHA_ID_PARAM,
                     extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """每日免费剧情池单抽: 定位卡池 -> 校验免费状态 -> 抽 1 次 -> 解析结果。
 

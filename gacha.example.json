@@ -1,10 +1,17 @@
 {
-  "_说明": "复制成 gacha.json 后即可用(本地运行)。CI 上不用这个文件, 改在仓库 Variables 里配。",
+  "_说明": "复制成 gacha.json 后即可用(本地运行)。CI 上不用这个文件, 改在仓库 Variables / FGO_GACHA_EXTRA 里配。",
+  "_参数来源": "2026-10-13 抓包实测: 单抽请求为 gachaId/num/ticketItemId/shopIdIndex/gachaSubId/storyAdjustIds/selectBonusList",
   "gacha_id": 500139,
-  "id_param": "id",
-  "extra": {},
+  "id_param": "gachaId",
+  "extra": {
+    "ticketItemId": 4001,
+    "shopIdIndex": 1,
+    "gachaSubId": 0,
+    "selectBonusList": "",
+    "storyAdjustIds": "[31011,31111,31211,31311,31411,31511,31611,31711,31811,31911,32011,32111,32121,32131,32141,32151,32161,32171,32181,32191,32202,32211,32221,32231,32241,32251]"
+  },
   "assume_free": true,
   "draw": false,
   "free_until": "2026-12-31",
-  "_备注": "draw=false 只检查不抽卡; 确认无误再改成 true。国服 2026-10 剧情池 id = 500139"
+  "_备注": "draw=false 只检查不抽卡; storyAdjustIds 与剧情进度相关, 大版本更新后可能需要重抓"
 }

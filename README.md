@@ -102,8 +102,20 @@ python checkin.py
 | `num` / `FGO_GACHA_NUM` | 同上 | `1` | 抽数 |
 | `assume_free` / `FGO_GACHA_ASSUME_FREE` | 同上 | `true` | 服务端不下发免费标记时也按免费池处理；**云端建议开启** |
 | `free_until` / `FGO_GACHA_FREE_UNTIL` | 同上 | `2026-12-31` | 活动窗口，过期自动停手 |
-| `id_param` | 同上 | `id` | 卡池 ID 的参数名，一般不用改 |
-| `extra` / `FGO_GACHA_EXTRA` | 同上 | 空 | 额外请求参数 JSON，一般不用改 |
+| `id_param` | 同上 | `gachaId` | 卡池 ID 的参数名（**是 `gachaId`，不是 `id`**） |
+| `extra` / `FGO_GACHA_EXTRA` | 同上 | 见下 | 单抽必需的其余字段（JSON） |
+
+单抽的完整请求形态（2026-10 抓包实测；`gacha.example.json` 里已配好）：
+
+```json
+{ "gachaId": 500139, "num": 1,
+  "ticketItemId": 4001, "shopIdIndex": 1, "gachaSubId": 0, "selectBonusList": "",
+  "storyAdjustIds": "[31011,31111,...,32251]" }
+```
+
+- `ticketItemId` / `shopIdIndex` 是**兜底支付方式**（呼符 → `mstGacha.shopId1`）；**"当日免费次数有没有用掉"由服务端判定**，免费单抽与付费单抽是**同一个请求**。
+- `storyAdjustIds` 与账号的**剧情进度**相关，大版本更新后可能需要重新抓包更新。
+- 云端用 `FGO_GACHA_ID_PARAM=gachaId` + `FGO_GACHA_EXTRA`（上面这段 JSON 的字符串形式），或直接用本地 `gacha.json`。
 
 > `gacha_id` 需要更新时（换新剧情池），用 `python gacha.py --list` 取**今天有 `freeDrawAt` 记录的那一行 `gachaId`**。
 

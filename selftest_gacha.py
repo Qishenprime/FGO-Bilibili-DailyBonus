@@ -127,6 +127,50 @@ out2 = fgo_cn.daily_free_draw(fake2, top2, gacha_id=1234, do_draw=False,
 check("可用 + 只检查 -> 发请求数 0", fake2.calls, 0)
 check("可用 + 只检查 -> 未抽", out2["drawn"], False)
 
+# --- 抽卡请求参数: 必须与 2026-10-13 抓包实测一致 ---
+class FormSpy:
+    def __init__(self):
+        self.form = None
+
+    def action(self, key, form=None, **kw):
+        self.form = form
+        return {"response": [], "cache": {}}
+
+
+spy = FormSpy()
+ADJUST = "[31011,31111,32251]"
+fgo_cn.gacha_draw(spy, 500139, 1, extra={"storyAdjustIds": ADJUST})
+want_form = {"gachaId": 500139, "num": 1, "ticketItemId": 4001, "shopIdIndex": 1,
+             "gachaSubId": 0, "selectBonusList": "", "storyAdjustIds": ADJUST}
+got_form = {k: spy.form.get(k) for k in want_form}
+check("抽卡请求参数与抓包一致", got_form, want_form)
+check("参数名是 gachaId(不是 id)", "id" in (spy.form or {}), False)
+
+# --- 结果解析: 用抓包实测的响应结构 ---
+CAPTURED = {
+    "response": [{"resCode": "00", "nid": "gacha_draw", "success": {
+        "gachaInfos": [{"isNew": False, "userSvtId": 1736913362, "type": 1,
+                        "objectId": 9402470, "num": 1, "limitCount": 0,
+                        "sellQp": 0, "sellMana": 0, "svtCoinNum": 0}],
+        "bonusGiftIds": [], "extraGiftIds": [], "gachaExtraGifts": [],
+        "canRankUpClassIds": [1, 2, 3, 4, 5, 6, 7]}}],
+    "cache": {"updated": {
+        "userItem": [{"userId": "x", "itemId": "4001", "num": 15}],
+        "userGacha": [{"gachaId": "500139", "num": 10, "tenNum": "0",
+                       "freeDrawAt": "1791867817"}]},
+        "replaced": {}, "serverTime": 1791867990},
+}
+res_cap = fgo_cn.gacha_draw_result(CAPTURED, gacha_id=500139,
+                                   game_row_before={"zerotime": 1791792000},
+                                   ticket_before=16)
+check("抓包响应: 成功", res_cap["ok"], True)
+check("抓包响应: 认出 1 张卡", len(res_cap["cards"]), 1)
+check("抓包响应: 卡种类=从者", res_cap["cards"][0]["kind"], "从者")
+check("抓包响应: objectId", res_cap["cards"][0]["objectId"], 9402470)
+check("抓包响应: 呼符 -1(付费)", res_cap["resource"].get("item4001"), -1)
+check("抓包响应: 判定为付费", res_cap["verdict"], "paid")
+check("抓包响应: success 字段", "gachaInfos" in res_cap["success_keys"], True)
+
 print()
 if FAILED:
     print(f"{len(FAILED)} 项失败: {FAILED}")

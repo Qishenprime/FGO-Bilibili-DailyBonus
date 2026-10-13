@@ -1,0 +1,19 @@
+feat: 按抓包实测修正抽卡请求 + 解析 gachaInfos
+
+2026-10-13 抓包拿到真实请求, 之前所有"形状试探"错误的原因也随之清楚:
+
+  gachaId=500139  num=1  ticketItemId=4001  shopIdIndex=1  gachaSubId=0
+  storyAdjustIds=[31011,...,32251]  selectBonusList=
+
+参数名是 gachaId(不是 id), 且 ticketItemId/shopIdIndex/storyAdjustIds 等是必填 ——
+只发 id/num 时服务端忽略 id, 于是在"参数错误"和"扭蛋ID有误"之间反复横跳。
+
+- fgo_cn: GACHA_DRAW_DEFAULTS 记录实测参数(可用 gacha.json / FGO_GACHA_EXTRA 覆盖);
+  gacha_draw 默认参数名改为 gachaId
+- fgo_cn: 结果解析直接读 success.gachaInfos(type/objectId/isNew/limitCount), 带出
+  bonusGiftIds/extraGiftIds/gachaExtraGifts, 保留泛化扫描兜底
+- gacha.example.json: 写入实测参数(含 storyAdjustIds)
+- workflow: 透传 FGO_GACHA_ID_PARAM / FGO_GACHA_EXTRA
+- selftest_gacha: 新增 7 条对照抓包的断言(请求参数逐字段比对 + 真实响应解析)
+- README/DEVELOPMENT: 记录真实请求形态, 以及"免费与付费是同一请求、由服务端按
+  freeDrawAt 判定"这一关键结论

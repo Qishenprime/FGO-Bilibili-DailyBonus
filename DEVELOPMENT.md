@@ -224,6 +224,56 @@ userGacha 里 freeDrawAt = 你点抽的那一分钟 的那一行, 它的 gachaId
 因为"每日免费单抽"必须在这个池子上留下免费抽的痕迹，而 `userGacha` 每次 `toplogin` 都全量下发 ——
 等于服务端自己把答案送上门。代价：一次游戏内点击，零工具、零 root、零证书。
 
+> 但**光有 id 还抽不动** —— 见下一节：请求里还有四个必填字段，第一次上线时就是栽在这里
+> （`id=500139` 一路 `扭蛋ID有误`），最后仍然得抓一次包。
+
+### 真正的请求形态（2026-10-13 抓包实测）
+
+`freeDrawAt` 只能给出 id，`gachadraw` 的完整参数是抓包才定下来的：
+
+```
+POST ac.php?_key=gachadraw
+  gachaId        = 500139        ← 参数名是 gachaId, 不是 id
+  num            = 1
+  ticketItemId   = 4001          ← 兜底支付: 呼符(item 4001)
+  shopIdIndex    = 1             ← 1 -> mstGacha.shopId1
+  gachaSubId     = 0
+  storyAdjustIds = [31011,31111,...,32251]    ← 与剧情进度相关的一长串 id
+  selectBonusList= (空)
+```
+
+响应（`resCode=00`，这次是用呼符抽的）：
+
+```json
+success: { "gachaInfos": [{"type":1,"objectId":9402470,"isNew":false,"limitCount":0,"num":1}],
+           "bonusGiftIds":[], "extraGiftIds":[], "gachaExtraGifts":[], "canRankUpClassIds":[1..7] }
+cache.updated: userItem(4001: 16→15) / userGacha(num 9→10) / userSvt(新卡) / userGachaExtraCount / userGame
+```
+
+两条关键结论：
+
+1. **免费单抽和付费单抽是同一个请求** —— 同日 13:03 那次免费抽更新了 `freeDrawAt`、呼符没变；
+   13:15 这次用呼符的则 `userItem(4001)` 减 1、`freeDrawAt` 不动。客户端请求形态一致，
+   "用不用免费次数"完全由服务端按 `freeDrawAt` 判定。所以自动化的安全边界就是那条守卫：
+   **只在 `freeDrawAt < zerotime` 时才发请求**。
+2. 之前那 13 种"参数形状试探"全错，原因也清楚了：`id` 只是被服务端**忽略**了，而
+   `gachaId`/`ticketItemId`/`shopIdIndex`/`storyAdjustIds` 这些必填字段一个都没带，
+   报错因此在"参数错误"和"扭蛋ID有误"之间反复横跳 —— 环境里没有真实样本时, 盲试的参数空间太大。
+
+### 转折：id 不用抓包也能拿到（历史记录，已并入上一节）
+
+折腾了半天代理和证书，最后拿到 id 的方式却出乎意料地简单 —— **在游戏里手动点一次免费单抽，
+然后读签到响应**：
+
+```
+userGacha 里 freeDrawAt = 你点抽的那一分钟 的那一行, 它的 gachaId 就是剧情池 id
+  → gachaId=500139  freeDrawAt=2026-10-12 22:02:09  num=7
+  → 同时 圣晶石 73 / 呼符 7 一点没变  ← 证明这次真的是免费抽
+```
+
+因为"每日免费单抽"必须在这个池子上留下免费抽的痕迹，而 `userGacha` 每次 `toplogin` 都全量下发 ——
+等于服务端自己把答案送上门。代价：一次游戏内点击，零工具、零 root、零证书。
+
 > 顺便记两条负面结论，免得后人重复踩：
 > - `gachadraw` 用 `num=0` 当"卡池是否存在"的探针**无效**：无效 id 与真实 id 都回 `扭蛋ID有误`。
 > - 参数名 `id` 才是被服务端接受的（写成标量 `gachaId` 直接 `参数错误`）；之前一路 `扭蛋ID有误`
