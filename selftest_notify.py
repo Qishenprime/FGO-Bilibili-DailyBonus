@@ -168,9 +168,7 @@ PAYLOAD = {
 }
 APPLE = {"requested": 1, "converted": 0, "name": "", "ap_before": 23, "ap_after": None,
          "errors": ["AP=23/140 < 40, 未达合成阈值"], "eta_seconds": 5100}
-GACHA = {"skipped": True, "notes": [],
-         "state": {"reason": "今日免费单抽已使用 (freeDrawAt 晚于今日重置时刻)"}}
-report = checkin.build_report(PAYLOAD, APPLE, GACHA, 11.4)
+report = checkin.build_report(PAYLOAD, APPLE, 11.4)
 print("\n---- 报告预览 ----")
 print(report)
 print("------------------\n")
@@ -180,21 +178,7 @@ check("报告含圣晶石/呼符", "圣晶石: 99   呼符: 0" in report, True)
 check("报告含连续/累计登录", "连续登录: 12天 / 累计: 365天" in report, True)
 check("报告含苹果跳过原因", "苹果合成: 跳过, AP=23/140 < 40, 未达合成阈值" in report, True)
 check("报告含 ETA", "约 1小时25分钟后达到阈值" in report, True)
-check("报告含免费单抽状态", "免费单抽: 跳过 (今日免费单抽已使用" in report, True)
 check("报告末行是耗时", report.splitlines()[-1].endswith("完成, 耗时 11.4s"), True)
-
-# 抽卡"试了但失败" -> 报告带 ⚠️, 且 finish 走告警样式
-GACHA_FAIL = {"skipped": False, "pool_id": 500139, "pool_name": "",
-              "result": {"ok": False, "code": "99", "fail": "扭蛋ID有误"}}
-report2 = checkin.build_report(PAYLOAD, APPLE, GACHA_FAIL, 9.9)
-print("\n---- 抽卡失败时的报告 ----")
-print(report2)
-print("--------------------------\n")
-check("抽卡失败 -> 行首 ⚠️", "⚠️ 免费单抽: 失败 resCode=99 扭蛋ID有误" in report2, True)
-check("抽卡失败 -> 提示需要核对 id", "需要抓一次真实单抽核对" in report2, True)
-check("gacha_warned(失败) 为真", checkin.gacha_warned(GACHA_FAIL), True)
-check("gacha_warned(跳过) 为假", checkin.gacha_warned(GACHA), False)
-check("gacha_warned(None) 为假", checkin.gacha_warned(None), False)
 
 # 呼符读数: updated 比 replaced 新, 必须优先取 updated(线上出现过 0 vs 7)
 FRESH = {"cache": {"updated": {"userItem": [{"itemId": 4001, "num": 7}]},
@@ -206,7 +190,7 @@ OLD_ONLY = {"cache": {"updated": {}, "replaced": {"userItem": [{"itemId": 4001, 
 check("只有 replaced 时退回快照", checkin.item_num(OLD_ONLY, 4001), 3)
 check("都没有时返回 None", checkin.item_num({}, 4001), None)
 
-check("失败报告带原因", checkin.build_report({}, None, None, 3.2).splitlines()[0],
+check("失败报告带原因", checkin.build_report({}, None, 3.2).splitlines()[0],
       "===== 签到成功 =====")
 
 print()

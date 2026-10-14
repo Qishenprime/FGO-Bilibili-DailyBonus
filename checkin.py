@@ -13,7 +13,6 @@ import sys
 import time
 
 import fgo_cn
-import gacha
 import notify
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,7 +23,6 @@ if hasattr(sys.stdout, "reconfigure"):
 
 AUTH_FILE = "auth.json"
 UPDATED_FILE = "updated_auth.json"
-GACHA_CONFIG = "gacha.json"
 REFRESH_THRESHOLD = 30 * 86400  # 剩余不足 30 天则刷新
 
 _START = time.time()
@@ -124,83 +122,7 @@ def _flag(name: str, default: bool = False) -> bool:
     return raw not in ("0", "false", "no", "off", "关")
 
 
-def gacha_env() -> dict:
-    """剧情池每日免费单抽的相关配置(环境变量 + 可选 gacha.json)。"""
-    raw_id = (os.environ.get("FGO_GACHA_ID") or "").strip()
-    cfg: dict = {}
-    try:
-        with open(GACHA_CONFIG, encoding="utf-8") as f:
-            loaded = json.load(f)
-        cfg = loaded if isinstance(loaded, dict) else {}
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        log(f"gacha.json 读取失败(忽略): {exc}")
-
-    gacha_id = int(raw_id) if raw_id.isdigit() else (
-        int(cfg["gacha_id"]) if str(cfg.get("gacha_id") or "").isdigit() else None)
-    do_draw = _flag("FGO_GACHA_DRAW", bool(cfg.get("draw")))
-    # 没配 id 也没要求真抽 -> 该功能整体不参与签到(避免多余的检查噪音)
-    enabled = gacha_id is not None or do_draw
-    assume_free = _flag("FGO_GACHA_ASSUME_FREE", bool(cfg.get("assume_free")))
-    until_raw = (os.environ.get("FGO_GACHA_FREE_UNTIL") or "").strip() or cfg.get("free_until")
-    free_until = None
-    if until_raw and (os.environ.get("FGO_GACHA_FREE_WINDOW") or "1").strip() != "0":
-        try:
-            free_until = gacha.parse_date(str(until_raw))
-        except SystemExit as exc:
-            log(f"FGO_GACHA_FREE_UNTIL 解析失败(忽略窗口校验): {exc}")
-    try:
-        num = max(1, int(os.environ.get("FGO_GACHA_NUM") or cfg.get("num") or 1))
-    except ValueError:
-        num = 1
-    id_param = (os.environ.get("FGO_GACHA_ID_PARAM") or "").strip() \
-        or str(cfg.get("id_param") or "id")
-    extra = cfg.get("extra") if isinstance(cfg.get("extra"), dict) else {}
-    raw_extra = (os.environ.get("FGO_GACHA_EXTRA") or "").strip()
-    if raw_extra:
-        try:
-            parsed = json.loads(raw_extra)
-            if isinstance(parsed, dict):
-                extra = parsed
-        except json.JSONDecodeError:
-            log(f"FGO_GACHA_EXTRA 不是合法 JSON, 已忽略: {raw_extra}")
-    return {"enabled": enabled, "draw": do_draw, "id": gacha_id, "num": num,
-            "assume_free": assume_free, "free_until": free_until,
-            "id_param": id_param, "extra": extra}
-
-
-def gacha_summary(res: dict | None) -> str:
-    """把抽卡结果压成一行/一块文本。抽卡失败时加 ⚠️ 标记, 方便在通知里一眼看到。"""
-    if res is None:
-        return ""
-    if res.get("skipped"):
-        reason = (res.get("notes") or [""])[0] or (res.get("state") or {}).get("reason", "")
-        return f"免费单抽: 跳过 ({reason})"
-    result = res.get("result") or {}
-    pid = res.get("pool_id")
-    name = res.get("pool_name") or ""
-    if not result:
-        return f"免费单抽: 已检查 id={pid} {name}"
-    if not result.get("ok"):
-        return (f"⚠️ 免费单抽: 失败 resCode={result.get('code')} {result.get('fail')}"
-                f"  (id={pid}; 说明卡池 id 或请求参数不对, 需要抓一次真实单抽核对)")
-    lines = [f"免费单抽: 成功 id={pid} {name} 判定={result.get('verdict')}"]
-    for c in result.get("cards") or []:
-        lines.append("  - " + " ".join(f"{k}={v}" for k, v in c.items()))
-    if result.get("resource"):
-        lines.append(f"  资源变化: {json.dumps(result['resource'], ensure_ascii=False)}")
-    return "\n".join(lines)
-
-
-def gacha_warned(gacha_res: dict | None) -> bool:
-    """抽卡是否"试了但失败"(用于把通知标成告警色, 而不是一片祥和)。"""
-    result = (gacha_res or {}).get("result") or {}
-    return bool(result) and not result.get("ok")
-
-
-def build_report(payload: dict, apple: dict | None, gacha_res: dict | None,
-                 elapsed: float) -> str:
+def build_report(payload: dict, apple: dict | None, elapsed: float) -> str:
     """把签到结果拼成一段文本(与控制台输出一致, 也是推送给 ntfy/TG 的正文)。"""
     lines = ["===== 签到成功 =====", summarize(payload)]
     if apple is not None:
@@ -220,31 +142,25 @@ def build_report(payload: dict, apple: dict | None, gacha_res: dict | None,
             lines.append(f"苹果合成: 跳过, {apple['errors'][0]}{eta_txt}")
         else:
             lines.append(f"苹果合成: 未完成 ({'; '.join(apple['errors']) or '未知原因'}){tail}")
-    summary = gacha_summary(gacha_res)
-    if summary:
-        lines.append(summary)
     lines.append(f"[{time.strftime('%H:%M:%S')}] 完成, 耗时 {elapsed:.1f}s")
     return "\n".join(lines)
 
 
 def finish(msg: str, ok: bool = True, payload: dict | None = None,
-           apple: dict | None = None, gacha_res: dict | None = None) -> int:
+           apple: dict | None = None) -> int:
     """统一收尾: 打印报告 + 推送。ok=False 时把 msg 当作失败原因推出去。
 
     报告正文末行已经是"完成, 耗时 …", 所以这里不再单独打一遍(线上出现过重复行)。
     """
     elapsed = time.time() - _START
-    warn = ok and gacha_warned(gacha_res)            # 签到成功但抽卡失败 -> 告警样式
     if ok:
-        report = build_report(payload or {}, apple, gacha_res, elapsed)
+        report = build_report(payload or {}, apple, elapsed)
     else:
         report = f"{msg}\n[{time.strftime('%H:%M:%S')}] 耗时 {elapsed:.1f}s"
     print()
     print(report if ok else f"===== 签到失败 =====\n{report}")
-    if warn:
-        log("注意: 本次抽卡尝试失败(其余步骤正常), 通知已按告警样式发送")
     try:
-        notify.send_report(report, ok=ok, warn=warn, log=log)
+        notify.send_report(report, ok=ok, log=log)
     except Exception as exc:                      # 推送问题绝不影响退出码
         log(f"推送异常(已忽略): {type(exc).__name__}: {exc}")
     return 0 if ok else 1
@@ -271,14 +187,9 @@ def main() -> int:
         except ValueError:
             apple_min_ap = 120
         ap_min_txt = str(apple_min_ap)
-    gacha_cfg = gacha_env()
-    gacha_txt = "关"
-    if gacha_cfg["enabled"]:
-        gacha_txt = (f"{'抽' if gacha_cfg['draw'] else '只检查'} "
-                     f"id={gacha_cfg['id'] if gacha_cfg['id'] is not None else '自动'}")
     log(f"开始签到: 御主={auth.get('nickname', '?')} 平台={auth.get('platform', 'android_bili')} "
         f"凭据={auth_src}")
-    log(f"苹果合成={'关' if apple_num <= 0 else f'{apple_num}个/阈值{ap_min_txt}'}  免费单抽={gacha_txt}")
+    log(f"苹果合成={'关' if apple_num <= 0 else f'{apple_num}个/阈值{ap_min_txt}'}")
 
     changed = False
     remaining = int(auth.get("expires_at") or 0) - time.time()
@@ -301,7 +212,6 @@ def main() -> int:
 
     payload: dict = {}
     apple = None
-    gacha_res = None
     try:
         session, payload = fgo_cn.open_session(
             access_token=auth["access_token"],
@@ -314,13 +224,6 @@ def main() -> int:
         )
         if apple_num > 0:
             apple = fgo_cn.convert_apples(session, payload, apple_num, apple_min_ap, log_cb)
-        if gacha_cfg["enabled"]:
-            gacha_res = fgo_cn.daily_free_draw(
-                session, payload, gacha_id=gacha_cfg["id"], num=gacha_cfg["num"],
-                assume_free=gacha_cfg["assume_free"], free_until=gacha_cfg["free_until"],
-                do_draw=gacha_cfg["draw"], log_cb=log_cb,
-                id_param=gacha_cfg["id_param"], extra=gacha_cfg["extra"],
-            )
     except fgo_cn.FgoError as exc:
         return finish(f"签到失败: {exc}", ok=False)
     except Exception as exc:
@@ -329,7 +232,7 @@ def main() -> int:
         if changed:
             save_auth(auth, from_env)
 
-    return finish("", ok=True, payload=payload, apple=apple, gacha_res=gacha_res)
+    return finish("", ok=True, payload=payload, apple=apple)
 
 
 if __name__ == "__main__":

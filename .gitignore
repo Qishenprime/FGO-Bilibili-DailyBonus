@@ -1,4 +1,4 @@
-venv/
+﻿venv/
 auth.json
 updated_auth.json
 pending_qr.json
@@ -8,7 +8,5 @@ __pycache__/
 *.log
 captured_keys.log
 mitm_*.log
-gacha.json
 *_auth.json
-_capture/
 gametop_cache.json
